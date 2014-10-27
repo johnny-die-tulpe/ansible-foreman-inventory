@@ -62,6 +62,9 @@ import re
 import argparse
 import ConfigParser
 import collections
+import shelve
+import datetime
+import pdb
 
 try:
     import json
@@ -89,11 +92,48 @@ class ForemanInventory(object):
         keys = ['operatingsystem', 'hostgroup', 'environment', 'model', 'compute_resource', 'domain', 'subnet', 'architecture', 'host']
         return {k:{} for k in keys}
 
+    def _store_cache(self, obj_type, obj_id, data):
+        #pdb.set_trace()
+        obj_id = str(obj_id)
+        today = datetime.date.today().strftime('%Y-%m-%d')
+        if not self._cache.has_key(obj_id):
+          self._cache[obj_id] = {}
+        self._cache[obj_id]['ttl'] = today
+        self._cache[obj_id][obj_type] = data
+
+
+    def _get_cache(self, obj_type, obj_id):
+        obj_id = str(obj_id)
+        ttl = datetime.timedelta(days=self.cachettl)
+        today = datetime.date.today()
+        max_age = today - ttl
+        #pdb.set_trace()
+        if self.cache:
+            if self._cache.has_key(obj_id) and self._cache[obj_id].has_key('ttl'):
+                y, m, d = self._cache[obj_id]['ttl'].split('-')
+                cachetime = datetime.date(int(y), int(m), int(d))
+                if cachetime > max_age:
+                    return self._cache[obj_id].get(obj_type, None)
+                else:
+                    del self._cache[obj_id]
+    def _load_cache(self):
+        """Load cache"""
+        return shelve.open('/tmp/inventory-cache', writeback=True)
+
+    def _get_conn(self):
+        try:
+            self.client = Foreman(self.base_url, (self.username, self.password))
+            
+        except ConnectionError, e:
+            print '''It looks like Foreman's API is unreachable.'''
+            print e
+            sys.exit(1)
+
     def __init__(self):
         """Main execution path"""
 
+        self.client = None
         self.inventory = self._empty_inventory()
-        self._cache = self._empty_cache()
 
         self.base_url = None
         self.username = None
@@ -103,16 +143,11 @@ class ForemanInventory(object):
         self.read_settings()
         self.parse_cli_args()
 
+        self._cache = self._load_cache()
+
         if self.base_url is None or self.username is None or self.password is None:
             print '''Could not find values for Foreman base_url, username or password.
 They must be specified via ini file.'''
-            sys.exit(1)
-
-        try:
-            self.client = Foreman(self.base_url, (self.username, self.password))
-        except ConnectionError, e:
-            print '''It looks like Foreman's API is unreachable.'''
-            print e
             sys.exit(1)
 
         if self.args.host:
@@ -158,6 +193,7 @@ They must be specified via ini file.'''
         hosts  = []
 
         page = 1
+        self._get_conn()
         while True:
             resp = self.client.index_hosts(page=page)
             if len(resp) < 1:
@@ -184,6 +220,8 @@ They must be specified via ini file.'''
         self.base_url = config.get('foreman', 'base_url')
         self.username = config.get('foreman', 'username')
         self.password = config.get('foreman', 'password')
+        self.cache    = config.getboolean('foreman', 'cache')
+        self.cachettl = config.getint('foreman', 'cachettl')
 
     def parse_cli_args(self):
         """Command line argument processing"""
@@ -262,13 +300,15 @@ They must be specified via ini file.'''
         if obj_id is None:
             return None
 
-        obj = self._cache.get(obj_type).get(obj_id, None)
+        obj = self._get_cache(obj_type, obj_id)
 
         if obj is None:
+            if not self.client:
+                self._get_conn()
             method_name = "show_{0}s".format(obj_type)
             func = getattr(self.client, method_name)
             obj = func(obj_id)
-            self._cache[obj_type][obj_id] = obj
+            self._store_cache(obj_type, obj_id, obj)
 
         return obj.get(obj_type)
 
