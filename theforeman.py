@@ -182,7 +182,7 @@ They must be specified via ini file.'''
             'updated': meta.get('updated_at'),
             'status': meta.get('status'),
             # to ssh from ansible
-            'ansible_ssh_host': meta.get('ip'),
+            'ansible_ssh_host': meta.get('name'),
         }
 
         return host_desc
