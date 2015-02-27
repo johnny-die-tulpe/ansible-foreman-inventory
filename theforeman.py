@@ -65,6 +65,8 @@ import collections
 import shelve
 import datetime
 import pdb
+import requests.packages.urllib3
+requests.packages.urllib3.disable_warnings()
 
 try:
     import json
@@ -93,7 +95,6 @@ class ForemanInventory(object):
         return {k:{} for k in keys}
 
     def _store_cache(self, obj_type, obj_id, data):
-        #pdb.set_trace()
         obj_id = str(obj_id)
         today = datetime.date.today().strftime('%Y-%m-%d')
         if not self._cache.has_key(obj_id):
@@ -107,7 +108,6 @@ class ForemanInventory(object):
         ttl = datetime.timedelta(days=self.cachettl)
         today = datetime.date.today()
         max_age = today - ttl
-        #pdb.set_trace()
         if self.cache:
             if self._cache.has_key(obj_id) and self._cache[obj_id].has_key('ttl'):
                 y, m, d = self._cache[obj_id]['ttl'].split('-')
@@ -169,7 +169,7 @@ They must be specified via ini file.'''
 
         host_desc = {
             'id': meta.get('id'),
-            'ip': meta.get('ip'),
+            #'ip': meta.get('ip'),
             'name': meta.get('name'),
             'environment': meta.get('environment').get('environment').get('name').lower(),
             'os': self._get_os_from_id(meta.get('operatingsystem_id')),
@@ -181,10 +181,10 @@ They must be specified via ini file.'''
             'created': meta.get('created_at'),
             'updated': meta.get('updated_at'),
             'status': meta.get('status'),
+            'foreman_environment': self._get_specific_fact('foreman_environment', meta.get('name')),
             # to ssh from ansible
             'ansible_ssh_host': meta.get('name'),
         }
-
         return host_desc
 
     def get_inventory(self):
@@ -295,6 +295,15 @@ They must be specified via ini file.'''
 
         return arch.get('name')
 
+    def _get_specific_fact(self, fact, host):
+        facts = self._get_cache(fact, 'facts')
+        if not facts:
+            if not self.client:
+                self._get_conn()
+            all_facts = self.client.index_fact_values(per_page=10000, search=fact)
+            self._store_cache(fact, 'facts', all_facts)
+        return self._get_cache(fact, 'facts')[host][fact]
+
     def _get_object_from_id(self, obj_type, obj_id):
         """Get an object from it's ID"""
         if obj_id is None:
@@ -311,6 +320,5 @@ They must be specified via ini file.'''
             self._store_cache(obj_type, obj_id, obj)
 
         return obj.get(obj_type)
-
 
 ForemanInventory()
